@@ -12,7 +12,11 @@ runs:
         arch: x64
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v6
+      uses: astral-sh/setup-uv@v7
+      with:
+        # We only use `uv run --python` as a Python launcher, not a uv project,
+        # so there is nothing to cache; caching would only emit a warning.
+        enable-cache: false
 
     - name: Setup depot tools
       uses: 2ndlab/actions/setup-depot-tools@main
@@ -25,8 +29,8 @@ runs:
         let build = $"($count).($hash)"
         [
             $"BuildVersion=($build)"
-            $"SkiaSharpName=libSkiaSharp-($env.SkiaSharpVersion)-($env.UCRTVersion)-($build)"
-            $"HarfBuzzSharpName=libHarfBuzzSharp-($env.SkiaSharpVersion)-($env.UCRTVersion)-($build)"
+            $"SkiaSharpName=libSkiaSharp-($env.SkiaSharpVersion)-($build)"
+            $"HarfBuzzSharpName=libHarfBuzzSharp-($env.SkiaSharpVersion)-($build)"
             $"BuildDir=($env.GITHUB_WORKSPACE)/out/windows/x64/"
-            $"PackageName=2ndLAB.SkiaSharp.Static.($env.SkiaSharpVersion)-($env.UCRTVersion)-($build)"
+            $"PackageName=2ndLAB.SkiaSharp.Static.($env.SkiaSharpVersion)"
         ] | str join (char newline) | save --append $env.GITHUB_ENV

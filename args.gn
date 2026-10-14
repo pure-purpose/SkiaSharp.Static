@@ -1,5 +1,13 @@
-# Build arguments go here.
-# See "gn args <out_dir> --list" for available build arguments.
+# GN build arguments for the static SkiaSharp build (Avalonia / NativeAOT).
+# See "gn args <out_dir> --list" for the full list of available arguments.
+#
+# NOTE: skipping the wasm/emsdk toolchain is NOT a GN argument. It is handled by
+# the GIT_SYNC_DEPS_SKIP_EMSDK environment variable, set in
+# .github/actions/build/action.yml.
+#
+# Unknown arguments only produce a GN warning ("Build argument has no effect"),
+# so the same file can be shared by the 2.x / 3.x / 4.x workflows.
+
 target_os = "win"
 target_cpu = "x64"
 
@@ -17,20 +25,22 @@ skia_use_icu = false
 skia_use_piex = false
 skia_use_sfntly = false
 skia_use_system_expat = false
+skia_use_system_freetype2 = false
 skia_use_system_libjpeg_turbo = false
 skia_use_system_libpng = false
 skia_use_system_libwebp = false
 skia_use_system_zlib = false
-skia_use_vma = false # VULKAN VMA
+skia_use_vma = false
 skia_use_vulkan = false
 skia_use_xps = false
 
-win_sdk_version = "10.0.26100.0"
+# The partition_alloc allocator shim refuses to compile when C++ exceptions
+# (extra_cflags "/EHsc") are enabled on Windows, so partition_alloc must be off.
+# On Skia revisions that predate this argument, GN just warns and ignores it.
+skia_use_partition_alloc = false
 
 clang_win =
     "C:/Program Files/LLVM"
-
-clang_win_version = 21 # clang-cl only has major version number
 
 extra_cflags = [
   "/MT",

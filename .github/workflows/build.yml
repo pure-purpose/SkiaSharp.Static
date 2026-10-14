@@ -1,28 +1,113 @@
-name: build-skia-2.88.9
+name: build-skia
+
 on:
+  schedule:
+    # Daily check for a new upstream SkiaSharp stable release.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Upstream SkiaSharp version to build (e.g. 4.153.1 or 3.119.4). Leave empty to build the latest stable release."
+        required: false
+        default: ""
   push:
-    paths:
-      - ".github/workflows/**"
-      - ".github/actions/**"
-      - "args.gn"
+    tags:
+      - "v*"
+
 defaults:
   run:
     shell: nu {0}
 
-env:
-  SkiaSharpVersion: 2.88.9
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      changed: ${{ steps.gate.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve upstream stable version
+        id: resolve
+        shell: bash
+        run: |
+          # Released versions only: tags are exactly vX.Y.Z, so -preview / -rc /
+          # -beta / -gpuN / -svgN and 4-part versions are excluded. A manual
+          # "version" input always takes precedence.
+          V=""
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            V="${{ github.event.inputs.version }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V=$(git ls-remote --tags https://github.com/mono/SkiaSharp.git "refs/tags/v*" \
+                  | sed 's#.*refs/tags/##' \
+                  | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" \
+                  | sed 's/^v//' \
+                  | sort -V \
+                  | tail -n1 || true)
+          fi
+          if [ -z "${V:-}" ]; then
+            echo "::error::Could not resolve an upstream stable version"
+            exit 1
+          fi
+          # Prefer the released tag; fall back to the release branch.
+          if git ls-remote --exit-code --tags https://github.com/mono/SkiaSharp.git "refs/tags/v$V" >/dev/null 2>&1; then
+            REF="v$V"
+          else
+            REF="release/$V"
+          fi
+          echo "Resolved upstream version: $V (ref $REF)"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether to build
+        id: gate
+        shell: bash
+        run: |
+          PREV=$(cat "versions/last-built.txt" 2>/dev/null || echo "")
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$PREV" = "${{ steps.resolve.outputs.version }}" ]; then
+            echo "Version $PREV already built; skipping."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
-    runs-on: windows-2025
+    needs: resolve
+    if: needs.resolve.outputs.changed == 'true'
+    runs-on: windows-latest
     permissions:
       id-token: write
       attestations: write
       contents: write
+    env:
+      SkiaSharpVersion: ${{ needs.resolve.outputs.version }}
+      SkiaSharpRef: ${{ needs.resolve.outputs.ref }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
       - run: winget install --id LLVM.LLVM --accept-package-agreements --accept-source-agreements --disable-interactivity
       - uses: ./.github/actions/build
       - uses: ./.github/actions/deploy
         with:
           NUGET_KEY: ${{ secrets.NUGET_KEY }}
+
+      # Keep scheduled runs from rebuilding the same version forever, and keep
+      # the repo active so GitHub does not disable the schedule.
+      - name: Record and commit version marker
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: |
+          mkdir -p versions
+          echo "${{ needs.resolve.outputs.version }}" > versions/last-built.txt
+          git add versions/last-built.txt
+          if git diff --cached --quiet; then
+            echo "No version change to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: record built SkiaSharp version ${{ needs.resolve.outputs.version }}"
+          git push
